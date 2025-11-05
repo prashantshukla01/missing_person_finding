@@ -5,6 +5,7 @@ import cv2
 import os
 from utils.helpers import save_detection_to_db, load_persons_from_db
 import json
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +95,9 @@ def get_streams():
         logger.error(f"Error getting streams: {e}")
         return jsonify({}), 500
 
-# ADD THESE MISSING ROUTES:
-
 @cctv_bp.route('/stream/<stream_name>/frame')
 def get_stream_frame(stream_name):
-    """Get current frame from CCTV stream"""
+    """Get current frame from CCTV stream with face detection"""
     try:
         frame_base64 = cctv_manager.get_current_frame(stream_name, as_base64=True)
         
@@ -111,10 +110,16 @@ def get_stream_frame(stream_name):
         if frame_base64:
             response_data['frame'] = frame_base64
             
-            # Process frame for person detection (optional - can be heavy)
-            if request.args.get('detect', 'false').lower() == 'true':
+            # Always run face detection for webcam streams
+            stream_info = cctv_manager.active_streams.get(stream_name, {})
+            if stream_info.get('url') == "0":  # Webcam stream
                 recent_detections = process_frame_for_detection(stream_name)
                 response_data['recent_detections'] = recent_detections
+            else:
+                # Optional: run detection for other streams if requested
+                if request.args.get('detect', 'false').lower() == 'true':
+                    recent_detections = process_frame_for_detection(stream_name)
+                    response_data['recent_detections'] = recent_detections
         
         return jsonify(response_data)
         
@@ -149,7 +154,7 @@ def retry_stream(stream_name):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def process_frame_for_detection(stream_name):
-    """Process frame to detect registered persons"""
+    """Process frame to detect registered persons with visual feedback"""
     detections = []
     
     try:
@@ -167,35 +172,65 @@ def process_frame_for_detection(stream_name):
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         faces = face_matcher.insight_app.get(rgb_frame)
         
-        for person_id, person_info in persons.items():
-            if 'embedding' not in person_info:
-                continue
+        # Draw face detection results on frame
+        for face in faces:
+            # Draw face bounding box
+            bbox = face.bbox.astype(int)
+            cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 2)
             
-            target_embedding = person_info['embedding']
-            
-            for face in faces:
+            # Check against registered persons
+            person_detected = False
+            for person_id, person_info in persons.items():
+                if 'embedding' not in person_info:
+                    continue
+                
+                target_embedding = person_info['embedding']
                 similarity, confidence = face_matcher.compare_embeddings(
                     target_embedding, 
                     {'insightface': face.embedding}
                 )
                 
                 if similarity > config.FACE_RECOGNITION_THRESHOLD:
+                    # Person matched!
                     detection = {
                         'person_id': person_id,
                         'person_name': person_info.get('name', 'Unknown'),
                         'confidence': similarity,
                         'location': stream_name,
-                        'bbox': face.bbox.tolist() if hasattr(face.bbox, 'tolist') else face.bbox,
+                        'bbox': bbox.tolist(),
                         'stream_name': stream_name
                     }
                     
                     detections.append(detection)
+                    
+                    # Draw recognition info on frame
+                    label = f"{person_info['name']} ({similarity*100:.1f}%)"
+                    cv2.putText(frame, label, (bbox[0], bbox[1]-10), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                     
                     # Save detection to database
                     save_detection_to_db(detection, config.DETECTIONS_DB_FILE)
                     
                     logger.info(f"Detection: {person_info['name']} at {stream_name} "
                                f"with {similarity*100:.1f}% confidence")
+                    person_detected = True
+                    break
+            
+            # If no person matched, show "Unknown Person"
+            if not person_detected:
+                cv2.putText(frame, "Unknown Person", (bbox[0], bbox[1]-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        
+        # Update the frame in the stream with detection boxes
+        if len(faces) > 0:
+            # Convert back to BGR and update the frame
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            if not cctv_manager.frame_queues[stream_name].empty():
+                try:
+                    cctv_manager.frame_queues[stream_name].get_nowait()
+                except:
+                    pass
+            cctv_manager.frame_queues[stream_name].put(frame_bgr)
         
         return detections
         

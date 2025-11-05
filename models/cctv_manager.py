@@ -4,6 +4,10 @@ import time
 import logging
 import json
 import base64
+import cv2
+import numpy as np
+import time
+
 import os
 from datetime import datetime
 from queue import Queue
@@ -110,13 +114,21 @@ class CCTVManager:
         logger.info(f"Successfully added stream: {stream_name} at location: {location}")
         return True
     
-    def add_webcam_stream(self, stream_name="Webcam", location="Local"):
+    def add_webcam_stream(self, stream_name="Live Webcam", location="Your Location"):
         """Add webcam as a stream for testing"""
         logger.info(f"Attempting to add webcam stream: {stream_name}")
-        
-        # Use 0 for default webcam
+
         webcam_url = "0"
-        
+
+        # ✅ Fix: Remove existing webcam stream if already present
+        if stream_name in self.active_streams:
+            logger.warning(f"Stream {stream_name} already exists — removing and reinitializing.")
+            try:
+                del self.active_streams[stream_name]
+                logger.info(f"Removed old stream entry for {stream_name}.")
+            except Exception as e:
+                logger.error(f"Failed to remove old webcam stream: {e}")
+
         # Test if webcam is available
         try:
             cap = cv2.VideoCapture(0)
@@ -129,11 +141,13 @@ class CCTVManager:
                 else:
                     logger.error("Webcam opened but cannot read frames")
             else:
-                logger.error("Webcam cannot be opened")
+                logger.error("Webcam not accessible or already in use.")
         except Exception as e:
             logger.error(f"Error testing webcam: {e}")
-        
+
+        logger.error("Failed to add webcam stream — switching to demo.")
         return False
+
     
     def test_rtsp_connection(self, rtsp_url):
         """Test if RTSP stream is accessible"""
@@ -185,22 +199,47 @@ class CCTVManager:
         return True
     
     def _monitor_stream(self, stream_name):
-        """Monitor stream and capture frames"""
+        """Monitor stream and capture frames with webcam support"""
         stream_info = self.active_streams[stream_name]
+        
+        # Initialize webcam if this is a webcam stream
+        cap = None
+        if stream_info['url'] == "0":
+            try:
+                cap = cv2.VideoCapture(0)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_FPS, 15)
+                logger.info(f"Webcam initialized for {stream_name}")
+            except Exception as e:
+                logger.error(f"Failed to initialize webcam: {e}")
+                return
         
         while self.running and stream_info['active']:
             try:
-                # Create a test frame for demonstration
-                test_image = np.ones((480, 640, 3), dtype=np.uint8) * 255
-                cv2.putText(test_image, f"Stream: {stream_name}", (50, 150), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-                cv2.putText(test_image, "Face Detection System", (50, 200), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-                cv2.putText(test_image, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), (50, 250), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                if stream_info['url'] == "0" and cap is not None:
+                    # Read from webcam
+                    ret, frame = cap.read()
+                    if not ret:
+                        logger.warning("Failed to read from webcam")
+                        time.sleep(1)
+                        continue
+                    # Resize for consistency
+                    frame = cv2.resize(frame, (640, 480))
+                else:
+                    # Create demo frame for non-webcam streams
+                    frame = np.ones((480, 640, 3), dtype=np.uint8) * 255
+                    cv2.putText(frame, f"Stream: {stream_name}", (50, 150), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.putText(frame, "Face Detection System", (50, 200), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+                    cv2.putText(frame, "Look at webcam for face detection", (50, 250), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                    cv2.putText(frame, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), (50, 300), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
                 
                 # Update stream info
-                stream_info['last_frame'] = test_image
+                stream_info['last_frame'] = frame
                 stream_info['last_update'] = datetime.now()
                 
                 # Put frame in queue
@@ -210,44 +249,61 @@ class CCTVManager:
                     except:
                         pass
                 
-                self.frame_queues[stream_name].put(test_image)
+                self.frame_queues[stream_name].put(frame)
                 
-                time.sleep(2)  # Update every 2 seconds for demo
+                time.sleep(0.1)  # 10 FPS for smooth video
                 
             except Exception as e:
                 logger.error(f"Error in stream monitoring for {stream_name}: {e}")
-                time.sleep(5)
-    
-    def get_current_frame(self, stream_name, as_base64=False):
-        """Get current frame from stream"""
-        if stream_name not in self.frame_queues:
-            return None
+                time.sleep(1)
         
+        # Release webcam when done
+        if cap is not None:
+            cap.release()
+            logger.info(f"Webcam released for {stream_name}")
+    
+    def get_current_frame(self, stream_name):
+        """Return the latest frame for a given stream, using queue fallback and safe placeholder"""
         try:
-            frame = self.frame_queues[stream_name].get_nowait()
-            
-            if as_base64 and frame is not None:
-                # Convert frame to base64 for web display
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                frame_base64 = base64.b64encode(buffer).decode('utf-8')
-                return frame_base64
-            
-            return frame
-            
-        except:
-            # Return a default frame if queue is empty
-            test_image = np.ones((480, 640, 3), dtype=np.uint8) * 255
-            cv2.putText(test_image, f"Stream: {stream_name}", (50, 150), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-            cv2.putText(test_image, "No frame available", (50, 200), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-            
-            if as_base64:
-                _, buffer = cv2.imencode('.jpg', test_image, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                frame_base64 = base64.b64encode(buffer).decode('utf-8')
-                return frame_base64
-            
-            return test_image
+            if stream_name not in self.active_streams:
+                logger.warning(f"Unknown stream requested: {stream_name}")
+                return None
+
+            frame = None
+            # Try from queue
+            if stream_name in self.frame_queues and not self.frame_queues[stream_name].empty():
+                try:
+                    frame = self.frame_queues[stream_name].get_nowait()
+                    self.active_streams[stream_name]["last_frame"] = frame
+                except Exception:
+                    pass
+            else:
+                # fallback
+                frame = self.active_streams[stream_name].get("last_frame")
+
+            # Graceful startup placeholder
+            if frame is None:
+                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, "Initializing Webcam...", (100, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                cv2.putText(placeholder, time.strftime("%H:%M:%S"), (240, 300),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
+                ret, buffer = cv2.imencode(".jpg", placeholder)
+                return buffer.tobytes()
+
+            # Encode real frame
+            ret, buffer = cv2.imencode(".jpg", frame)
+            if not ret:
+                logger.error(f"Frame encoding failed for {stream_name}")
+                return None
+
+            return buffer.tobytes()
+
+        except Exception as e:
+            logger.error(f"Error retrieving current frame for {stream_name}: {e}")
+            return None
+
+
     
     def get_stream_status(self):
         """Get status of all streams"""

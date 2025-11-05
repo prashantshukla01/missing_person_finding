@@ -2,6 +2,11 @@
   "Demo Stream": {
     "url": "demo",
     "location": "Test Location",
-    "added_date": "2025-11-05T19:14:40.015156"
+    "added_date": "2025-11-05T20:23:29.370579"
+  },
+  "Live Webcam": {
+    "url": "0",
+    "location": "Your Location",
+    "added_date": "2025-11-05T20:24:30.508512"
   }
 }

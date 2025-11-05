@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify,Response, abort
 import logging
 from config import config
 from models.face_matcher import AdvancedFaceMatcher
@@ -75,17 +75,55 @@ def create_app(config_name='default'):
     # Add test streams
     add_test_streams()
     
-    # Add a simple demo stream
-    try:
-        success = cctv_manager.add_stream("Demo Stream", "demo", "Test Location")
-        if success:
-            logger.info("Demo stream added successfully")
-        else:
-            logger.error("Failed to add demo stream")
-    except Exception as e:
-        logger.error(f"Error adding demo stream: {e}")
+    def add_webcam_for_testing():
+        """Add webcam stream for face detection testing"""
+        try:
+            # Test if webcam is available
+            import cv2
+            cap = cv2.VideoCapture(0)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    logger.info("Webcam is available, adding webcam stream")
+                    success = cctv_manager.add_webcam_stream("Live Webcam", "Your Location")
+                    if success:
+                        logger.info("Webcam stream added successfully")
+                        return True
+                    else:
+                        logger.error("Failed to add webcam stream")
+                else:
+                    logger.warning("Webcam opened but cannot read frames")
+            else:
+                logger.warning("Webcam not available")
+        except Exception as e:
+            logger.error(f"Error testing webcam: {e}")
+        
+        return False
 
+    # Add webcam stream
+    webcam_added = add_webcam_for_testing()
+
+    if not webcam_added:
+        logger.info("Using demo stream instead of webcam")
+        # Ensure demo stream exists
+        try:
+            cctv_manager.add_stream("Demo Stream", "demo", "Test Location")
+        except:
+            pass
+    @app.route('/api/cctv/stream/<name>/frame')
+    def get_stream_frame(name):
+        try:
+            frame = cctv_manager.get_current_frame(name)
+            if frame is None:
+                abort(404)
+            return Response(frame, mimetype='image/jpeg')
+        except Exception as e:
+            logger.error(f"Error serving frame for {name}: {e}")
+            abort(500)
     # Root route
+    
+    
     @app.route('/')
     def index():
         return render_template('dashboard.html')

@@ -214,7 +214,7 @@
             // Start updating frame every 2 seconds
             this.streamInterval = setInterval(() => {
                 this.updateStreamFrame(streamName);
-            }, 2000);
+            }, 10);
         }
         
         async updateStreamInfo(streamName) {
@@ -235,18 +235,23 @@
             }
         }
         
-        async updateStreamFrame(streamName) {
+async updateStreamFrame(streamName) {
     try {
-        const response = await fetch(`/api/cctv/stream/${streamName}/frame`);
-        const result = await response.json();
-        
+        const frameUrl = `/api/cctv/stream/${encodeURIComponent(streamName)}/frame?${Date.now()}`;
+        const existingImg = document.querySelector('#streamViewer img');
         const viewer = document.getElementById('streamViewer');
-        
-        if (result.has_frame && result.frame) {
+
+        // If image already exists, just update its src (no DOM flicker)
+        if (existingImg) {
+            existingImg.src = frameUrl;
+        } else {
+            // Initial render: create the image element
             viewer.innerHTML = `
                 <div class="position-relative">
-                    <img src="data:image/jpeg;base64,${result.frame}" 
-                         class="img-fluid rounded" alt="Live Stream"
+                    <img id="liveStreamImg" 
+                         src="${frameUrl}" 
+                         class="img-fluid rounded" 
+                         alt="Live Stream"
                          style="max-width: 100%; height: auto;">
                     <div class="position-absolute top-0 end-0 bg-dark text-white px-2 py-1 m-2 rounded">
                         <i class="fas fa-circle text-success"></i> LIVE
@@ -256,28 +261,15 @@
                     </div>
                 </div>
             `;
-            
-            // Update stream info
-            this.updateStreamInfo(streamName);
-        } else {
-            viewer.innerHTML = `
-                <div class="text-center p-5 bg-light rounded">
-                    <i class="fas fa-video-slash fa-2x text-muted mb-3"></i>
-                    <h5 class="text-muted">No Video Feed</h5>
-                    <p class="text-muted">Unable to retrieve stream frame</p>
-                    ${result.error ? `<p class="text-danger small">Error: ${result.error}</p>` : ''}
-                    <button class="btn btn-sm btn-warning mt-2" onclick="cctvUI.retryStream('${streamName}')">
-                        <i class="fas fa-redo"></i> Retry Connection
-                    </button>
-                </div>
-            `;
         }
-        
-        // Check for recent detections
-        if (result.recent_detections && result.recent_detections.length > 0) {
-            this.showDetectionAlerts(result.recent_detections);
-        }
-        
+
+        // Smoothly update time overlay too
+        const timeOverlay = viewer.querySelector('.position-absolute.bottom-0.start-0');
+        if (timeOverlay) timeOverlay.textContent = new Date().toLocaleTimeString();
+
+        // Update stream info once every cycle
+        this.updateStreamInfo(streamName);
+
     } catch (error) {
         console.error('Error updating stream frame:', error);
         const viewer = document.getElementById('streamViewer');
@@ -293,17 +285,8 @@
         `;
     }
 }
-        retryStream(streamName) {
-    fetch(`/api/cctv/retry/${streamName}`, { method: 'POST' })
-        .then(response => response.json())
-        .then(result => {
-            if (result.success) {
-                this.startStreamMonitoring(streamName);
-            } else {
-                alert('Failed to retry stream: ' + result.error);
-            }
-        });
-}
+
+
         
         async loadRecentDetections() {
             try {
