@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Registered Persons - Missing Person Detection System{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="fas fa-users"></i> Registered Persons</h2>
+            <a href="{{ url_for('person.upload_person_form') }}" class="btn btn-primary">
+                <i class="fas fa-user-plus"></i> Add New Person
+            </a>
+        </div>
+
+        {% if persons %}
+        <div class="row">
+            {% for person_id, person in persons.items() %}
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-4">
+                                {% if person.image_path %}
+                                <img src="{{ url_for('static', filename=person.image_path) }}" 
+                                     class="img-fluid rounded" alt="{{ person.name }}"
+                                     onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2RkZCIvPjx0ZXh0IHg9IjUwIiB5PSI1MCIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjE0IiBmaWxsPSIjOTk5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+Tm8gSW1hZ2U8L3RleHQ+PC9zdmc+'">
+                                {% else %}
+                                <div class="bg-light rounded d-flex align-items-center justify-content-center" style="width: 100px; height: 100px;">
+                                    <i class="fas fa-user fa-2x text-muted"></i>
+                                </div>
+                                {% endif %}
+                            </div>
+                            <div class="col-8">
+                                <h5 class="card-title">{{ person.name }}</h5>
+                                {% if person.age %}
+                                <p class="card-text mb-1"><strong>Age:</strong> {{ person.age }}</p>
+                                {% endif %}
+                                {% if person.last_seen_location %}
+                                <p class="card-text mb-1"><strong>Last Seen:</strong> {{ person.last_seen_location }}</p>
+                                {% endif %}
+                                {% if person.last_seen_time %}
+                                <p class="card-text mb-1"><strong>Time:</strong> {{ person.last_seen_time }}</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        {% if person.description %}
+                        <div class="mt-2">
+                            <small class="text-muted">{{ person.description|truncate(100) }}</small>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="card-footer">
+                        <small class="text-muted">Registered: {{ person.created_at[:10] if person.created_at else 'Unknown' }}</small>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="fas fa-users fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">No Persons Registered</h4>
+            <p class="text-muted">Start by adding a missing person to the system.</p>
+            <a href="{{ url_for('person.upload_person_form') }}" class="btn btn-primary btn-lg">
+                <i class="fas fa-user-plus"></i> Add First Person
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
